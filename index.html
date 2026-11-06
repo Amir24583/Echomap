@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EchoMap</title>
+<meta name="description" content="Map a room by echolocation with your phone's speaker and microphone.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-column instrument panel; a readout strip, then a single display (scope / map / test) */
+:root {
+  --ink: #0d1418;        /* panel background */
+  --panel: #142027;      /* raised surfaces */
+  --line: #24343d;       /* grid and borders */
+  --text: #d9e2e4;
+  --muted: #7f949b;
+  --trace: #f2a33a;      /* amber echo trace */
+  --motion: #5fc4d8;     /* cyan motion trace */
+  --hit: #ffd27a;
+  --bad: #ff6b5e;
+  --display: "Archivo", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--ink); color: var(--text); }
+body {
+  font: 15px/1.5 var(--display);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: max(12px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+}
+main { max-width: 640px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+h1 span { color: var(--trace); }
+.status { font: 12px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.status.live { color: var(--trace); }
+.status.err { color: var(--bad); }
+
+.readout { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.readout > div { background: var(--panel); padding: 10px 12px; min-width: 0; }
+.readout label { display: block; font: 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.readout output { font: 500 22px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.readout .big output { font-size: 34px; color: var(--trace); }
+
+.tabs { display: flex; gap: 6px; }
+.tabs button { flex: 1; }
+button {
+  font: 600 14px var(--display); color: var(--text); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer;
+}
+button[aria-selected="true"], button.primary { background: var(--trace); color: var(--ink); border-color: var(--trace); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--motion); outline-offset: 2px; }
+button:disabled { opacity: 0.45; cursor: default; }
+
+.display { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 10px; }
+canvas { width: 100%; display: block; border-radius: 6px; background: var(--ink); }
+#scope { aspect-ratio: 16 / 10; }
+#map { aspect-ratio: 1; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hint { font-size: 13px; color: var(--muted); margin: 0; max-width: 62ch; }
+.legend { font: 12px var(--mono); color: var(--muted); display: flex; gap: 14px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
+
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.settings label { display: grid; gap: 4px; font: 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+select, input { font: 15px var(--mono); color: var(--text); background: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px; width: 100%; }
+
+table { width: 100%; border-collapse: collapse; font: 13px var(--mono); font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 400; text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; }
+.table-wrap { overflow-x: auto; }
+details { border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+.warn { color: var(--bad); font-size: 13px; margin: 0; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Echo<span>Map</span></h1>
+    <div class="status" id="status">Idle</div>
+  </header>
+
+  <section class="readout" aria-label="Live readings">
+    <div class="big"><label>Nearest echo</label><output id="nearest">-- m</output></div>
+    <div><label>Heading</label><output id="heading">--°</output></div>
+    <div><label>Direct SNR</label><output id="snr">-- dB</output></div>
+  </section>
+
+  <div class="row">
+    <button class="primary" id="start">Start sonar</button>
+    <button id="exportBtn" disabled>Save raw data</button>
+  </div>
+  <p class="warn" id="warn" hidden></p>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-view="scopeView" id="tab-scope">Scope</button>
+    <button role="tab" aria-selected="false" data-view="mapView" id="tab-map">Map</button>
+    <button role="tab" aria-selected="false" data-view="testView" id="tab-test">Tape test</button>
+  </nav>
+
+  <section class="display" id="scopeView">
+    <canvas id="scope" width="1200" height="750" aria-label="Echo strength by distance"></canvas>
+    <div class="legend"><span><i style="background:var(--trace)"></i>echo strength (dB vs direct sound)</span><span><i style="background:var(--motion)"></i>change since background</span></div>
+    <div class="row">
+      <button id="bgBtn" disabled>Capture background</button>
+      <button id="bgClear" disabled>Clear background</button>
+    </div>
+    <p class="hint">Point the bottom edge of the phone (speaker and mic) at what you want to measure. Capture a background with nothing moving; after that the cyan trace shows only what moves, like a person walking past.</p>
+  </section>
+
+  <section class="display" id="mapView" hidden>
+    <canvas id="map" width="1000" height="1000" aria-label="Room outline from echoes"></canvas>
+    <div class="row">
+      <button id="mapClear">Clear map</button>
+    </div>
+    <p class="hint">Hold the phone flat at chest height, bottom edge pointing outward, and turn slowly on the spot (about 10 seconds per full circle). Each echo is drawn at its distance in the direction you were facing. Up is the direction you faced when the map was cleared.</p>
+  </section>
+
+  <section class="display" id="testView" hidden>
+    <p class="hint">Measure accuracy with a tape measure. Stand facing a flat wall with nothing in between, point the bottom edge at it, enter the true distance from the phone's bottom edge, and press Measure. Try 0.5, 1, 2 and 3 m.</p>
+    <div class="settings">
+      <label for="trueDist">True distance (m)<input id="trueDist" type="number" step="0.01" min="0.2" max="5" value="1.00"></label>
+      <label for="offset">Range offset (m)<input id="offset" type="number" step="0.001" value="0.000"></label>
+    </div>
+    <div class="row">
+      <button class="primary" id="measureBtn" disabled>Measure (20 readings)</button>
+      <button id="applyOffset" disabled>Use mean error as offset</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>True</th><th>Measured</th><th>Error</th><th>Spread</th><th>Found</th></tr></thead>
+        <tbody id="testRows"><tr><td colspan="5" style="text-align:center;color:var(--muted)">No measurements yet</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="settings" style="margin-top:10px">
+      <label for="band">Chirp band
+        <select id="band">
+          <option value="quiet">Quiet: 18–22 kHz</option>
+          <option value="audible">Audible: 4–10 kHz (stronger)</option>
+        </select>
+      </label>
+      <label for="temp">Air temperature (°C)<input id="temp" type="number" value="21" step="1"></label>
+      <label for="maxRange">Max range (m)<input id="maxRange" type="number" value="5" min="1" max="6" step="0.5"></label>
+      <label for="avg">Pings averaged<input id="avg" type="number" value="3" min="1" max="8" step="1"></label>
+      <label for="alpha">Detection threshold<input id="alpha" type="number" value="5" min="2" max="20" step="0.5"></label>
+      <label for="blind">Ignore closer than (m)<input id="blind" type="number" value="0.15" min="0.05" max="1" step="0.05"></label>
+    </div>
+    <p class="hint" style="margin-top:10px">Turn the ringer volume up. If nothing shows on the quiet band, your phone's speaker may roll off above 20 kHz: switch to the audible band. Changing band or range restarts the sonar.</p>
+  </details>
+</main>
+
+<script src="dsp.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
