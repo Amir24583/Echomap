@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EchoMap 3D Scan</title>
+<meta name="description" content="Scan the room around you into a 3D point cloud with your phone camera.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the point cloud is the page; controls sit in a strip under it */
+:root {
+  --ink: #0d1418; --panel: #142027; --line: #24343d; --text: #d9e2e4; --muted: #7f949b;
+  --trace: #f2a33a; --motion: #5fc4d8; --bad: #ff6b5e;
+  --display: "Archivo", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--ink); color: var(--text); }
+body {
+  font: 15px/1.5 var(--display);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: max(12px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+}
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 12px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+h1 span { color: var(--trace); }
+a { color: var(--motion); }
+.status { font: 12px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.status.live { color: var(--trace); }
+.status.err { color: var(--bad); }
+.stage { position: relative; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #070b0d; }
+#view { display: block; width: 100%; aspect-ratio: 3 / 4; touch-action: none; cursor: grab; }
+@media (min-width: 620px) { #view { aspect-ratio: 4 / 3; } }
+#cam { position: absolute; right: 8px; top: 8px; width: 84px; border-radius: 6px; border: 1px solid var(--line); background: #000; }
+.overlay { position: absolute; left: 10px; top: 8px; font: 12px var(--mono); color: var(--muted); pointer-events: none; }
+.overlay b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.coach { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; font-size: 14px; color: var(--text); padding: 0 12px; pointer-events: none; text-shadow: 0 1px 4px #000; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+button {
+  font: 600 14px var(--display); color: var(--text); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer;
+}
+button.primary { background: var(--trace); color: var(--ink); border-color: var(--trace); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--motion); outline-offset: 2px; }
+button:disabled { opacity: 0.45; cursor: default; }
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.settings label { display: grid; gap: 4px; font: 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+select, input { font: 15px var(--mono); color: var(--text); background: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px; width: 100%; }
+.hint { font-size: 13px; color: var(--muted); margin: 0; max-width: 62ch; }
+.warn { color: var(--bad); font-size: 13px; margin: 0; }
+progress { width: 100%; height: 6px; accent-color: var(--trace); }
+details { border-top: 1px solid var(--line); padding-top: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Echo<span>Map</span> 3D</h1>
+    <div class="status" id="status">Idle</div>
+  </header>
+
+  <div class="stage">
+    <canvas id="view" aria-label="3D point cloud of the room. Drag to rotate, pinch to zoom."></canvas>
+    <video id="cam" playsinline muted autoplay hidden></video>
+    <div class="overlay"><b id="nFrames">0</b> frames · <b id="nPoints">0</b> points</div>
+    <div class="coach" id="coach">Press Start scan, then turn slowly on the spot</div>
+  </div>
+  <progress id="prog" max="100" value="0" hidden></progress>
+
+  <div class="row">
+    <button class="primary" id="start">Start scan</button>
+    <button id="reset" disabled>Reset</button>
+    <button id="save" disabled>Save .ply</button>
+    <button id="demo">Demo room</button>
+  </div>
+  <p class="warn" id="warn" hidden></p>
+  <p class="hint">Hold the phone upright in portrait and turn slowly in a full circle, then tilt up and down to fill in the floor and ceiling. Each time you face a new direction the camera frame is turned into depth and added to the cloud. Drag the cloud to look around it. The first start downloads the depth model (about 25–50 MB).</p>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="settings" style="margin-top:10px">
+      <label for="color">Colours
+        <select id="color"><option value="0">Camera colours</option><option value="1">Height (scanner look)</option></select>
+      </label>
+      <label for="scale">Typical distance to walls (m)<input id="scale" type="number" value="2.5" min="0.5" max="10" step="0.1"></label>
+      <label for="fov">Camera field of view (°)<input id="fov" type="number" value="65" min="40" max="110" step="1"></label>
+      <label for="psize">Point size<input id="psize" type="number" value="3" min="1" max="8" step="0.5"></label>
+    </div>
+    <p class="hint" style="margin-top:10px">A single camera can't measure true size, so distances are approximate: the scan is scaled so the middle of the first view sits at the distance above. Shapes come from an AI depth model (Depth Anything V2), not from a laser.</p>
+  </details>
+  <p class="hint"><a href="./">Sonar mode</a> measures real distances with sound.</p>
+</main>
+
+<script src="scan-geom.js"></script>
+<script src="scan.js"></script>
+</body>
+</html>
