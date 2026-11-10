@@ -103,6 +103,7 @@ summary { cursor: pointer; font-weight: 600; }
   <nav class="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-view="scopeView" id="tab-scope">Scope</button>
     <button role="tab" aria-selected="false" data-view="mapView" id="tab-map">Map</button>
+    <button role="tab" aria-selected="false" data-view="cloudView" id="tab-cloud">3D</button>
     <button role="tab" aria-selected="false" data-view="testView" id="tab-test">Tape test</button>
   </nav>
 
@@ -122,6 +123,16 @@ summary { cursor: pointer; font-weight: 600; }
       <button id="mapClear">Clear map</button>
     </div>
     <p class="hint">Hold the phone flat at chest height, bottom edge pointing outward, and turn slowly on the spot (about 10 seconds per full circle). Each echo is drawn at its distance in the direction you were facing. Up is the direction you faced when the map was cleared.</p>
+  </section>
+
+  <section class="display" id="cloudView" hidden>
+    <canvas id="cloud" style="aspect-ratio:1;touch-action:none;cursor:grab" aria-label="3D sketch of the room from echoes. Drag to rotate, pinch to zoom."></canvas>
+    <div class="legend"><span><i style="background:var(--motion)"></i>where the phone points now</span><span id="cloudCount">0 echo cells</span></div>
+    <div class="row">
+      <button id="cloudClear">Clear 3D</button>
+      <button id="cloudSave" disabled>Save .ply</button>
+    </div>
+    <p class="hint">Use the phone like a flashlight: aim its bottom edge at a wall, the ceiling or the floor, hold for a second, then move on slowly. Each echo is placed at its measured distance along the direction you were aiming. The sound beam is wide, so expect soft patches at the right distances, not sharp surfaces. Stand in one spot. Bigger dots are echoes heard more often.</p>
   </section>
 
   <section class="display" id="testView" hidden>
@@ -162,6 +173,7 @@ summary { cursor: pointer; font-weight: 600; }
 </main>
 
 <script src="dsp.js"></script>
+<script src="scan-geom.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
