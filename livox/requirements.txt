@@ -1,0 +1,2 @@
+numpy
+kiss-icp>=1.2
