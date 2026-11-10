@@ -8,6 +8,7 @@ Open it over HTTPS (GitHub Pages works). The microphone is blocked on plain `htt
 
 - **Sonar** (`index.html`): measures real distances with sound. Described below.
 - **3D scan** (`scan.html`): builds a 3D point cloud of the room from the camera. See "3D scan" further down.
+- **Livox LiDAR** (`livox/`, `viewer.html`): the accurate route. Python code that records a Livox Mid-360 and turns the data into a 3D map, with a simulator to test it before the hardware arrives. See "Livox LiDAR" further down.
 
 ## How it works
 
@@ -45,6 +46,29 @@ A phone with one mic can hear how far away things are, but not where they are, s
 Limits: shapes come from an AI depth estimate, not a laser, and true size can't be measured with one camera. The scan is scaled so the middle of the first view sits at the "typical distance to walls" setting. Walking around is not tracked, only turning on the spot.
 
 "Demo room" runs the whole pipeline on a synthetic room, with random scale and shift per frame, without a camera.
+
+## Livox LiDAR
+
+A phone can't measure distance with light, so a centimetre-accurate map needs a real LiDAR. `livox/` is the software for a Livox Mid-360, and it runs today against a simulated sensor.
+
+```bash
+pip install -r livox/requirements.txt
+python -m livox.run_sim --out out/        # simulate a walk, build the map, score it against ground truth
+python -m livox.test_livox                # packet format, ray casting, IMU, accuracy and UDP recorder checks
+```
+
+- `packets.py` reads and writes the sensor's UDP data packets (point cloud and IMU). The layout was checked against `livox_lidar_def.h` in Livox-SDK2.
+- `sim.py` is a simulated Mid-360 carried through a virtual two-room building: 200,000 points/s, 360° × (−7°..52°) field of view, 2 cm range noise, 0.15° angular noise, walking bob and hand wobble, and a 200 Hz IMU. It emits the same packets as the real sensor.
+- `record.py` listens on the sensor's ports (56301 points, 56401 IMU) and writes every datagram to a log, counting dropped packets.
+- `mapper.py` turns a log into a map: 100 ms frames, LiDAR odometry with motion de-skew ([KISS-ICP](https://github.com/PRBonn/kiss-icp)), then a voxel-averaged point cloud saved as `.ply`.
+- `run_sim.py` runs all of it and reports accuracy. The path is compared after the standard rigid alignment, and the map is compared with the building's true surfaces.
+- `viewer.html` shows a `.ply` map in the browser (3D or top-down plan). It opens `livox/sample/sim-map.ply` by default.
+
+Result for the full simulated walk (26 m, 40 s): median map error 1.7 cm, 99% of points within 5.9 cm, path error 3.2 cm RMS, 0.8 cm drift from start to end.
+
+What the simulation does not cover: the sensor's start-up and network configuration (done once with Livox Viewer 2 or the SDK), its real scan pattern (approximated here), and real-world effects like glass, mirrors and moving people. The IMU is recorded but not yet used. Fusing it (as FAST-LIO does) is the next step if hand motion turns out to be the limit on the real unit.
+
+With the real sensor: set the host IP on the sensor, run `python -m livox.record walk.lvx-log` on the Pi while you walk, then `python -m livox.mapper walk.lvx-log map.ply` on the laptop and open the result in `viewer.html`.
 
 ## Development
 

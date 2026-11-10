@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EchoMap Viewer</title>
+<meta name="description" content="View a 3D point cloud map (.ply) from the EchoMap Livox pipeline.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the map fills the page; one strip of controls and the accuracy report under it */
+:root {
+  --ink: #0d1418; --panel: #142027; --line: #24343d; --text: #d9e2e4; --muted: #7f949b;
+  --trace: #f2a33a; --motion: #5fc4d8; --bad: #ff6b5e;
+  --display: "Archivo", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--ink); color: var(--text); }
+body {
+  font: 15px/1.5 var(--display);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: max(12px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+}
+main { max-width: 900px; margin: 0 auto; display: grid; gap: 12px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+h1 span { color: var(--trace); }
+a { color: var(--motion); }
+.status { font: 12px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.stage { position: relative; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #070b0d; }
+#view { display: block; width: 100%; aspect-ratio: 3 / 4; touch-action: none; cursor: grab; }
+@media (min-width: 620px) { #view { aspect-ratio: 16 / 10; } }
+.overlay { position: absolute; left: 10px; top: 8px; font: 12px var(--mono); color: var(--muted); pointer-events: none; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+button, .filebtn {
+  font: 600 14px var(--display); color: var(--text); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer;
+}
+button[aria-pressed="true"] { background: var(--trace); color: var(--ink); border-color: var(--trace); }
+button:focus-visible, .filebtn:focus-within { outline: 2px solid var(--motion); outline-offset: 2px; }
+.filebtn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.hint { font-size: 13px; color: var(--muted); margin: 0; max-width: 64ch; }
+.warn { color: var(--bad); font-size: 13px; margin: 0; }
+.report { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.report div { background: var(--panel); padding: 10px 12px; }
+.report dt { font: 11px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.report dd { margin: 0; font: 500 20px var(--mono); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Echo<span>Map</span> Viewer</h1>
+    <div class="status" id="status">Loading…</div>
+  </header>
+  <div class="stage">
+    <canvas id="view" aria-label="3D point cloud map. Drag to rotate, pinch or scroll to zoom."></canvas>
+    <div class="overlay" id="info"></div>
+  </div>
+  <div class="row">
+    <button id="mHeight" aria-pressed="true">Height colours</button>
+    <button id="mTop" aria-pressed="false">Top-down plan</button>
+    <button id="mCut" aria-pressed="false">Hide ceiling</button>
+    <label class="filebtn">Open a .ply file<input type="file" id="file" accept=".ply"></label>
+  </div>
+  <p class="warn" id="warn" hidden></p>
+  <dl class="report" id="report" hidden></dl>
+  <p class="hint" id="caption">This is the sample map: a simulated Livox Mid-360 carried on a 26 m walk through a virtual two-room building, mapped by the same code that will process the real sensor. The numbers compare the map with the building's true geometry.</p>
+  <p class="hint"><a href="./">Sonar mode</a> · <a href="scan.html">Camera 3D scan</a></p>
+</main>
+<script src="viewer.js"></script>
+</body>
+</html>
