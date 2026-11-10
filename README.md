@@ -20,7 +20,8 @@ Open it over HTTPS (GitHub Pages works). The microphone is blocked on plain `htt
 6. **Range.** r = c · Δt / 2, where c = 331.3 + 0.606·T m/s and T is the air temperature in Settings.
 7. **Detection.** Cell-averaging CFAR. The guard band is sized to the matched-filter main lobe, so a peak's own shoulders don't hide it.
 8. **Map.** Each detection is binned by relative heading (gyroscope yaw, 5° bins) and range (5 cm bins) on a polar grid.
-9. **Motion.** "Capture background" stores the averaged complex profile of a still scene. The cyan trace is then |profile − background|, which shows only what moved.
+9. **3D.** The 3D tab uses the full phone orientation, not just the heading. The two strongest echoes of each reading are placed at their measured distance along the direction the bottom edge was aiming, in cells of 10° × 10° × 10 cm. Aim at walls, ceiling and floor in turn to build a rough 3D shell of the room, and save it as `.ply`.
+10. **Motion.** "Capture background" stores the averaged complex profile of a still scene. The cyan trace is then |profile − background|, which shows only what moved.
 
 ## Checking it's right
 
@@ -30,7 +31,7 @@ The **Tape test** tab is the ground truth. Stand facing a flat wall at measured 
 
 ## Limits
 
-- A phone hears distance but not direction. Direction comes from you turning the phone, and the speaker's beam is wide, so walls come out as smeared arcs, not sharp lines.
+- A phone hears distance but not direction. Direction comes from you aiming the phone, and the speaker's beam is wide, so walls come out as smeared arcs and soft patches, not sharp surfaces. The 3D view is a sketch of the room's size and shape, not a scan.
 - Range is about 3–5 m indoors. Soft furniture absorbs sound; hard walls reflect it well.
 - Some phones roll off above 20 kHz. If the quiet band shows nothing, use the audible band.
 

@@ -10,6 +10,8 @@
   const WINDOW = 8192;            // samples analysed per ping (~170 ms at 48 kHz)
   const RING_SEC = 30;            // raw audio kept for export
   const ANG_BINS = 72, RANGE_BIN_M = 0.05;
+  const CLOUD_DEG = 10, CLOUD_M = 0.1;
+  const G = window.ScanGeom;
 
   const state = {
     ctx: null, stream: null, node: null, src: null, analyzer: null, fs: 48000,
@@ -21,6 +23,7 @@
     bg: null, bgCollect: null,
     lastEnv: null, lastMotion: null, lastHits: [], lastC: 343, lastNBins: 0,
     map: new Float32Array(ANG_BINS * 120),
+    dir: null, cloud: new Map(), view: { yaw: 0.6, pitch: 0.5, dist: 1.3 },
     test: null, testRows: [],
     timer: null, running: false, clipCount: 0,
   };
@@ -124,7 +127,7 @@
     s.connect(ctx.destination);
     s.start(t);
     const frame = Math.round(t * state.fs);
-    const p = { frame, t, heading: state.heading };
+    const p = { frame, t, heading: state.heading, dir: state.dir };
     state.pending.push(p);
     state.pingLog.push(p);
     if (state.pingLog.length > RING_SEC / PING_INTERVAL + 10) state.pingLog.shift();
@@ -148,10 +151,11 @@
     // direct-path SNR: peak vs median envelope before it would be ideal; use the far tail instead
     state.lastDirect = r.direct;
     state.lastC = r.c; state.lastNBins = r.nBins;
-    state.group.push({ prof: r.profile, heading: p.heading });
+    state.group.push({ prof: r.profile, heading: p.heading, dir: p.dir });
     if (state.group.length < s.avg) return;
     const prof = D.averageProfiles(state.group.map(g => g.prof));
     const heading = state.group[state.group.length - 1].heading;
+    state.frameDir = state.group[state.group.length - 1].dir;
     state.group = [];
     frame(prof, r, heading, s);
   }
@@ -187,6 +191,23 @@
     $('snr').textContent = isFinite(snrDb) ? snrDb.toFixed(0) + ' dB' : '-- dB';
     const near = hits[0];
     $('nearest').textContent = near ? toM(near.index).toFixed(2) + ' m' : '-- m';
+
+    // 3D accumulation: the two strongest echoes, placed along the aiming direction.
+    // Cells are 10 deg x 10 deg x 10 cm in a sphere around the phone.
+    if (state.frameDir) {
+      const d = state.frameDir;
+      const az = Math.atan2(d[0], d[1]) * 180 / Math.PI, el = Math.asin(Math.max(-1, Math.min(1, d[2]))) * 180 / Math.PI;
+      const ai = Math.floor((az + 180) / CLOUD_DEG), ei = Math.floor((el + 90) / CLOUD_DEG);
+      const strongest = hits.slice().sort((a, b) => b.value - a.value).slice(0, 2);
+      for (const h of strongest) {
+        const m = toM(h.index);
+        if (m <= 0 || m > s.maxRange) continue;
+        const key = ai + ',' + ei + ',' + Math.floor(m / CLOUD_M);
+        state.cloud.set(key, (state.cloud.get(key) || 0) + 1);
+      }
+      $('cloudCount').textContent = state.cloud.size + ' echo cells';
+      $('cloudSave').disabled = !state.cloud.size;
+    }
 
     // map accumulation
     if (heading != null && state.heading0 != null) {
@@ -260,6 +281,7 @@
     drawQueued = false;
     if (!$('scopeView').hidden) drawScope();
     if (!$('mapView').hidden) drawMap();
+    if (!$('cloudView').hidden) drawCloud();
   }
 
   function drawScope() {
@@ -355,6 +377,94 @@
     g.fillStyle = css('--text'); g.beginPath(); g.arc(cx, cy, 5 * k, 0, Math.PI * 2); g.fill();
   }
 
+  // ---------- 3D echo view (WebGL points) ----------
+  let cgl = null, cprog = null, cloc = {}, cbuf = null;
+  function cloudPoints() {
+    // returns Float32Array [x, y, z, weight] per cell
+    const out = new Float32Array(state.cloud.size * 4);
+    let i = 0, max = 1;
+    for (const v of state.cloud.values()) if (v > max) max = v;
+    for (const [key, v] of state.cloud) {
+      const [ai, ei, ri] = key.split(',').map(Number);
+      const az = ((ai + 0.5) * CLOUD_DEG - 180) * Math.PI / 180, el = ((ei + 0.5) * CLOUD_DEG - 90) * Math.PI / 180, r = (ri + 0.5) * CLOUD_M;
+      out[i++] = r * Math.cos(el) * Math.sin(az); out[i++] = r * Math.cos(el) * Math.cos(az); out[i++] = r * Math.sin(el);
+      out[i++] = v / max;
+    }
+    return out;
+  }
+  function initCloudGL() {
+    const cv = $('cloud');
+    cgl = cv.getContext('webgl', { antialias: true, alpha: false });
+    if (!cgl) return;
+    const gl = cgl;
+    const sh = (type, src) => { const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o); return o; };
+    cprog = gl.createProgram();
+    gl.attachShader(cprog, sh(gl.VERTEX_SHADER, `
+      attribute vec4 aPos; uniform mat4 uMvp; uniform float uSize, uFlat, uRange; varying vec3 vCol;
+      void main() {
+        gl_Position = uMvp * vec4(aPos.xyz, 1.0);
+        gl_PointSize = uFlat > 0.5 ? uSize : uSize * (0.5 + 0.7 * aPos.w) / gl_Position.w;
+        float t = clamp(aPos.z / uRange * 0.5 + 0.5, 0.0, 1.0);
+        vec3 a = vec3(0.10, 0.25, 0.80), b = vec3(0.10, 0.80, 0.55), c = vec3(0.98, 0.85, 0.25);
+        vCol = uFlat > 0.5 ? vec3(0.37, 0.77, 0.85) : (t < 0.5 ? mix(a, b, t * 2.0) : mix(b, c, t * 2.0 - 1.0));
+      }`));
+    gl.attachShader(cprog, sh(gl.FRAGMENT_SHADER, 'precision mediump float; varying vec3 vCol; void main() { vec2 d = gl_PointCoord - 0.5; if (dot(d, d) > 0.25) discard; gl_FragColor = vec4(vCol, 1.0); }'));
+    gl.linkProgram(cprog);
+    for (const n of ['uMvp', 'uSize', 'uFlat', 'uRange']) cloc[n] = gl.getUniformLocation(cprog, n);
+    cloc.aPos = gl.getAttribLocation(cprog, 'aPos');
+    cbuf = gl.createBuffer();
+    gl.enable(gl.DEPTH_TEST);
+    // orbit controls
+    const ptrs = new Map(); let pinch0 = 0; const v = state.view;
+    cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]); pinch0 = 0; });
+    cv.addEventListener('pointermove', e => {
+      if (!ptrs.has(e.pointerId)) return;
+      const prev = ptrs.get(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+      if (ptrs.size === 1) { v.yaw -= (e.clientX - prev[0]) * 0.008; v.pitch = Math.max(-1.5, Math.min(1.5, v.pitch + (e.clientY - prev[1]) * 0.008)); }
+      else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; const dd = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch0) v.dist = Math.max(0.3, Math.min(6, v.dist * pinch0 / dd)); pinch0 = dd; }
+      requestDraw();
+    });
+    for (const ev of ['pointerup', 'pointercancel']) cv.addEventListener(ev, e => { ptrs.delete(e.pointerId); pinch0 = 0; });
+    cv.addEventListener('wheel', e => { e.preventDefault(); v.dist = Math.max(0.3, Math.min(6, v.dist * Math.exp(e.deltaY * 0.001))); requestDraw(); }, { passive: false });
+  }
+  function mat4mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let t = 0; for (let k = 0; k < 4; k++) t += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = t; } return o; }
+  function drawCloud() {
+    if (!cgl) initCloudGL();
+    if (!cgl) return;
+    const gl = cgl, cv = $('cloud'), s = settings(), v = state.view;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.round(cv.clientWidth * dpr) || 600;
+    if (cv.width !== w || cv.height !== w) { cv.width = w; cv.height = w; }
+    gl.viewport(0, 0, w, w);
+    gl.clearColor(0.051, 0.078, 0.094, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const d = v.dist * s.maxRange;
+    const eye = [d * Math.cos(v.pitch) * Math.sin(v.yaw), -d * Math.cos(v.pitch) * Math.cos(v.yaw), d * Math.sin(v.pitch)];
+    const nrm = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const crs = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const dt = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const z = nrm(eye), x = nrm(crs([0, 0, 1], z)), y = crs(z, x);
+    const view = new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dt(x, eye), -dt(y, eye), -dt(z, eye), 1]);
+    const f = 1 / Math.tan(25 * Math.PI / 180), n = 0.05, fa = 50 * s.maxRange;
+    const proj = new Float32Array([f, 0, 0, 0, 0, f, 0, 0, 0, 0, (fa + n) / (n - fa), -1, 0, 0, 2 * fa * n / (n - fa), 0]);
+    gl.useProgram(cprog);
+    gl.uniformMatrix4fv(cloc.uMvp, false, mat4mul(proj, view));
+    gl.uniform1f(cloc.uRange, 1.5);   // colour ramp spans 1.5 m below to 1.5 m above the phone
+    gl.bindBuffer(gl.ARRAY_BUFFER, cbuf);
+    gl.enableVertexAttribArray(cloc.aPos); gl.vertexAttribPointer(cloc.aPos, 4, gl.FLOAT, false, 0, 0);
+    // guide: range rings on the phone's level, the phone itself, and the aiming beam
+    const guide = [];
+    for (let m = 1; m <= s.maxRange; m++) for (let i = 0; i < 90; i++) { const a = i / 90 * 2 * Math.PI; guide.push(m * Math.cos(a), m * Math.sin(a), 0, 0); }
+    if (state.dir) for (let i = 1; i <= 60; i++) { const r = i / 60 * s.maxRange; guide.push(state.dir[0] * r, state.dir[1] * r, state.dir[2] * r, 0); }
+    guide.push(0, 0, 0, 0);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(guide), gl.DYNAMIC_DRAW);
+    gl.uniform1f(cloc.uFlat, 1); gl.uniform1f(cloc.uSize, 2.5 * dpr); gl.drawArrays(gl.POINTS, 0, guide.length / 4);
+    const pts = cloudPoints();
+    if (pts.length) {
+      gl.bufferData(gl.ARRAY_BUFFER, pts, gl.DYNAMIC_DRAW);
+      gl.uniform1f(cloc.uFlat, 0); gl.uniform1f(cloc.uSize, 0.3 * w); gl.drawArrays(gl.POINTS, 0, pts.length / 4);  // about one 25 cm cell
+    }
+  }
+
   // ---------- orientation ----------
   async function startOrientation() {
     try {
@@ -366,9 +476,11 @@
         if (e.alpha == null) return;
         state.orientationOk = true;
         state.heading = e.alpha; // gyro-integrated yaw, counter-clockwise; relative use only
+        // aiming direction in the world: the phone's bottom edge (speaker and mic) is device -y
+        if (e.beta != null && e.gamma != null) state.dir = G.apply(G.rotation(e.alpha, e.beta, e.gamma), [0, -1, 0]);
         if (state.heading0 == null) state.heading0 = e.alpha;
         $('heading').textContent = Math.round(((e.alpha - state.heading0) % 360 + 360) % 360) + '°';
-        if (!$('mapView').hidden) requestDraw();
+        if (!$('mapView').hidden || !$('cloudView').hidden) requestDraw();
       });
     } catch (e) { warn('Could not read the motion sensors: ' + e.message); }
   }
@@ -444,6 +556,15 @@
   for (const id of ['band', 'maxRange']) $(id).addEventListener('change', () => { if (state.running) startPinging(); });
   $('bgBtn').addEventListener('click', () => { state.bgCollect = []; setStatus('Hold still · capturing background', 'live'); });
   $('bgClear').addEventListener('click', () => { state.bg = null; state.lastMotion = null; requestDraw(); });
+  $('cloudClear').addEventListener('click', () => { state.cloud.clear(); $('cloudCount').textContent = '0 echo cells'; $('cloudSave').disabled = true; requestDraw(); });
+  $('cloudSave').addEventListener('click', async () => {
+    const pts = cloudPoints(), n = pts.length / 4;
+    const pos = new Float32Array(n * 3), col = new Uint8Array(n * 3);
+    for (let i = 0; i < n; i++) { pos.set(pts.subarray(i * 4, i * 4 + 3), i * 3); const c = Math.round(80 + 175 * pts[i * 4 + 3]); col[i * 3] = c; col[i * 3 + 1] = Math.round(c * 0.75); col[i * 3 + 2] = 60; }
+    const file = new File([G.encodePly(pos, col, n, 1)], `echomap-sonar-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.ply`, { type: 'application/octet-stream' });
+    try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'EchoMap sonar 3D' }); return; } } catch (e) { if (e.name === 'AbortError') return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+  });
   $('mapClear').addEventListener('click', () => { state.map.fill(0); state.heading0 = state.heading; requestDraw(); });
   $('exportBtn').addEventListener('click', exportRaw);
   $('measureBtn').addEventListener('click', () => {
@@ -468,4 +589,5 @@
   }));
 
   requestDraw();
+  window.__sonar = state; // for the automated check
 })();
