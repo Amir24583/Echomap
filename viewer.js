@@ -1,30 +1,22 @@
-/* EchoMap PLY viewer: binary little-endian PLY with float x,y,z + uchar r,g,b, drawn as WebGL points. */
+/* EchoMap PLY viewer: any PLY point cloud or mesh (vertices drawn as WebGL points). */
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
   const cv = $('view');
   const gl = cv.getContext('webgl', { antialias: true, alpha: false });
-  const st = { n: 0, yaw: 0.7, pitch: 0.75, dist: 1, center: [0, 0, 0], extent: 1, zmin: 0, zmax: 1, top: false, cut: false, height: true };
+  const st = { n: 0, yaw: 0.7, pitch: 0.75, dist: 1, center: [0, 0, 0], extent: 1, zmin: 0, zmax: 1, top: false, cut: false, height: true, yup: false };
   let prog, loc = {}, bufPos, bufCol;
 
   function warn(m) { $('warn').hidden = !m; $('warn').textContent = m || ''; }
 
-  function parsePly(buf) {
-    const bytes = new Uint8Array(buf);
-    const headEnd = (() => { const key = 'end_header\n'; for (let i = 0; i < Math.min(bytes.length, 4096); i++) { let ok = true; for (let j = 0; j < key.length; j++) if (bytes[i + j] !== key.charCodeAt(j)) { ok = false; break; } if (ok) return i + key.length; } return -1; })();
-    if (headEnd < 0) throw new Error('Not a PLY file.');
-    const head = new TextDecoder().decode(bytes.subarray(0, headEnd));
-    if (!/format binary_little_endian/.test(head)) throw new Error('Only binary little-endian PLY files are supported.');
-    const n = parseInt((/element vertex (\d+)/.exec(head) || [])[1], 10);
-    const props = [...head.matchAll(/property (\w+) (\w+)/g)].map(m => m[1] + ' ' + m[2]).join(',');
-    if (props !== 'float x,float y,float z,uchar red,uchar green,uchar blue') throw new Error('Unsupported PLY layout: expected x y z (float) and red green blue (uchar).');
-    if (headEnd + n * 15 > bytes.length) throw new Error('The PLY file is cut short.');
-    const pos = new Float32Array(n * 3), col = new Uint8Array(n * 3), dv = new DataView(buf, headEnd);
-    for (let i = 0, o = 0; i < n; i++, o += 15) {
-      pos[i * 3] = dv.getFloat32(o, true); pos[i * 3 + 1] = dv.getFloat32(o + 4, true); pos[i * 3 + 2] = dv.getFloat32(o + 8, true);
-      col[i * 3] = bytes[headEnd + o + 12]; col[i * 3 + 1] = bytes[headEnd + o + 13]; col[i * 3 + 2] = bytes[headEnd + o + 14];
-    }
-    return { n, pos, col };
+  // Parsing lives in ply.js (any ascii/binary PLY). Y-up files from iPhone apps are turned to Z-up.
+  let lastBuf = null, lastName = '';
+  function load(buf, name, auto) {
+    const cloud = EchoPly.parsePly(buf);
+    if (auto) { st.yup = EchoPly.isYUp(cloud); $('mYup').setAttribute('aria-pressed', String(st.yup)); }
+    if (st.yup) EchoPly.yUpToZUp(cloud.pos);
+    lastBuf = buf; lastName = name;
+    show(cloud, name);
   }
 
   function initGL() {
@@ -59,7 +51,7 @@
     st.extent = Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1; st.zmin = lo[2]; st.zmax = hi[2]; st.dist = 1.1;
     gl.bindBuffer(gl.ARRAY_BUFFER, bufPos); gl.bufferData(gl.ARRAY_BUFFER, cloud.pos, gl.STATIC_DRAW);
     gl.bindBuffer(gl.ARRAY_BUFFER, bufCol); gl.bufferData(gl.ARRAY_BUFFER, cloud.col, gl.STATIC_DRAW);
-    $('info').textContent = `${cloud.n.toLocaleString()} points · ${(hi[0] - lo[0]).toFixed(1)} × ${(hi[1] - lo[1]).toFixed(1)} × ${(hi[2] - lo[2]).toFixed(1)} m`;
+    $('info').textContent = `${cloud.n.toLocaleString()} ${cloud.faces ? 'mesh vertices' : 'points'} · ${(hi[0] - lo[0]).toFixed(1)} × ${(hi[1] - lo[1]).toFixed(1)} × ${(hi[2] - lo[2]).toFixed(1)} m`;
     $('status').textContent = name;
     requestDraw();
   }
@@ -122,10 +114,14 @@
 
   const toggle = (id, key) => $(id).addEventListener('click', () => { st[key] = !st[key]; $(id).setAttribute('aria-pressed', String(st[key])); requestDraw(); });
   toggle('mHeight', 'height'); toggle('mTop', 'top'); toggle('mCut', 'cut');
+  $('mYup').addEventListener('click', () => {
+    st.yup = !st.yup; $('mYup').setAttribute('aria-pressed', String(st.yup));
+    if (lastBuf) { try { warn(''); load(lastBuf, lastName); } catch (err) { warn(err.message); } }
+  });
 
   $('file').addEventListener('change', async e => {
     const f = e.target.files[0]; if (!f) return;
-    try { warn(''); show(parsePly(await f.arrayBuffer()), f.name); $('report').hidden = true; $('caption').hidden = true; }
+    try { warn(''); load(await f.arrayBuffer(), f.name, true); $('report').hidden = true; $('caption').hidden = true; }
     catch (err) { warn(err.message); }
   });
 
@@ -141,10 +137,11 @@
     try {
       if (!gl) throw new Error('This browser cannot draw 3D (WebGL is unavailable).');
       initGL();
-      const file = new URLSearchParams(location.search).get('file') || 'livox/sample/sim-map.ply';
+      const q = new URLSearchParams(location.search);
+      const file = q.get('file') || 'livox/sample/sim-map.ply';
       const res = await fetch(file);
       if (!res.ok) throw new Error('Could not load ' + file);
-      show(parsePly(await res.arrayBuffer()), 'Sample: simulated Livox walk');
+      load(await res.arrayBuffer(), file === 'livox/sample/sim-map.ply' ? 'Sample: simulated Livox walk' : file, true);
       if (file === 'livox/sample/sim-map.ply') { const r = await fetch('livox/sample/report.json'); if (r.ok) renderReport(await r.json()); }
     } catch (err) { $('status').textContent = 'Error'; warn(err.message); }
   })();

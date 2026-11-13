@@ -71,11 +71,18 @@ What the simulation does not cover: the sensor's start-up and network configurat
 
 With the real sensor: set the host IP on the sensor, run `python -m livox.record walk.lvx-log` on the Pi while you walk, then `python -m livox.mapper walk.lvx-log map.ply` on the laptop and open the result in `viewer.html`.
 
+## iPhone LiDAR scans
+
+iPhone Pro models (12 Pro and later) have a LiDAR depth sensor, but Safari gives web pages no access to it: there is no WebXR on iPhone, and the camera API returns colour only. A full LiDAR room scan needs a native app using ARKit or RoomPlan.
+
+Until EchoMap has one, scans from free iPhone LiDAR apps (3d Scanner App, Scaniverse, Polycam and others) open in `viewer.html`. It reads any PLY file, ascii or binary, point cloud or mesh (mesh vertices are drawn as points), with or without colour. Phone apps write Y-up files, and the viewer turns those to Z-up automatically. EchoMap's own files say "EchoMap" in a header comment and are left as they are. The "Y is up" button overrides the guess.
+
 ## Development
 
 ```bash
 node test/sim.test.js          # simulated echoes at 0.6 / 1.8 / 3.2 m with random latency; asserts < 3 cm error
 node test/geom.test.js         # 3D scan: orientation conventions, frame alignment on a synthetic room, PLY export
+node test/ply.test.js          # PLY reader: ascii/binary/big-endian, float colours, mesh faces, Y-up turn
 python3 -m http.server 8765    # then open http://localhost:8765
 ```
 

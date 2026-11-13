@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>EchoMap Viewer</title>
-<meta name="description" content="View a 3D point cloud map (.ply) from the EchoMap Livox pipeline.">
+<meta name="description" content="View a 3D point cloud or mesh (.ply) from the EchoMap Livox pipeline or an iPhone LiDAR scan.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -66,13 +66,15 @@ button:focus-visible, .filebtn:focus-within { outline: 2px solid var(--motion); 
     <button id="mHeight" aria-pressed="true">Height colours</button>
     <button id="mTop" aria-pressed="false">Top-down plan</button>
     <button id="mCut" aria-pressed="false">Hide ceiling</button>
-    <label class="filebtn">Open a .ply file<input type="file" id="file" accept=".ply"></label>
+    <button id="mYup" aria-pressed="false" title="iPhone LiDAR apps and ARKit write Y-up files">Y is up</button>
+    <label class="filebtn">Open a .ply file<input type="file" id="file" accept=".ply,application/octet-stream"></label>
   </div>
   <p class="warn" id="warn" hidden></p>
   <dl class="report" id="report" hidden></dl>
   <p class="hint" id="caption">This is the sample map: a simulated Livox Mid-360 carried on a 26 m walk through a virtual two-room building, mapped by the same code that will process the real sensor. The numbers compare the map with the building's true geometry.</p>
   <p class="hint"><a href="./">Sonar mode</a> · <a href="scan.html">Camera 3D scan</a></p>
 </main>
+<script src="ply.js"></script>
 <script src="viewer.js"></script>
 </body>
 </html>
